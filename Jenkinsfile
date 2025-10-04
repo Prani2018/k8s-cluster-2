@@ -25,14 +25,16 @@ pipeline {
             steps {
                 script {
                     dir('eks-cluster') {
-                        sh "
+                        sh '''
                         # Remove cached backend configuration
                         rm -rf .terraform
                         rm -f .terraform.lock.hcl
                         
                         # Reinitialize with new backend
                         terraform init -reconfigure 
-			"
+
+			'''
+
 
                         if (params.ACTION == 'apply') {
                             echo "Applying Terraform configuration..."
