@@ -31,7 +31,8 @@ pipeline {
                         rm -f .terraform.lock.hcl
                         
                         # Reinitialize with new backend
-                        terraform init -reconfigure"
+                        terraform init -reconfigure 
+			"
 
                         if (params.ACTION == 'apply') {
                             echo "Applying Terraform configuration..."
