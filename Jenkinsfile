@@ -25,8 +25,14 @@ pipeline {
             steps {
                 script {
                     dir('eks-cluster') {
-                        sh "terraform init"
+                        sh "
+                        # Remove cached backend configuration
+                        rm -rf .terraform
+                        rm -f .terraform.lock.hcl
                         
+                        # Reinitialize with new backend
+                        terraform init -reconfigure"
+
                         if (params.ACTION == 'apply') {
                             echo "Applying Terraform configuration..."
                             sh "terraform apply -auto-approve"
@@ -66,10 +72,10 @@ pipeline {
                         sh '''
                             if aws eks describe-cluster --name eks-cluster --region us-east-1 >/dev/null 2>&1; then
                                 echo "EKS cluster exists, updating kubeconfig..."
-                                aws eks update-kubeconfig --name eks-cluster --region us-east-1
+                                aws eks update-kubeconfig --name Cluster-East --region us-east-1
                                 echo "Cleaning up Kubernetes resources..."
-                                kubectl delete -f nginx-service.yaml -n default --ignore-not-found=true
-                                kubectl delete -f nginx-deployment.yaml -n default --ignore-not-found=true
+                                kubectl delete -f tomcat-service.yaml -n default --ignore-not-found=true
+                                kubectl delete -f tomcat-deployment.yaml -n default --ignore-not-found=true
                             else
                                 echo "EKS cluster does not exist, skipping Kubernetes cleanup"
                             fi

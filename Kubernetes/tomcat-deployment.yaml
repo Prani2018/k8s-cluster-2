@@ -1,12 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: simple-web-app
+  namespace: simple-web-app # Ensure this matches your secret
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: simple-web-app
+  template:
+    metadata:
+      labels:
+        app: simple-web-app
+      annotations:
+        # ARGO CD IMAGE UPDATER ANNOTATION
+        # Use the correct image path for the updater to monitor.
+        argocd-image-updater.argoproj.io/image-list: my-image=gcpa2279/simple-web-app
+    spec:
+      containers:
+      - name: simple-web-app
+        # CONTAINER IMAGE
+        # Use the correct image and tag from Docker Hub.
+        image: gcpa2279/simple-web-app:latest
+      imagePullSecrets:
+      - name: private-docker-registry
+---
 apiVersion: v1
 kind: Service
 metadata:
-  name: tomcat-service
+  name: simple-web-app-service # Choose a descriptive name for your service
+  namespace: simple-web-app             # Ensure this matches the namespace in your Deployment
 spec:
-  selector:
-    app: tomcat
-  type: LoadBalancer
+  type: LoadBalancer           # This will provision an AWS ELB (or equivalent) for external access
   ports:
-    - protocol: TCP
-      port: 80
-      targetPort: 8080
+  - port: 80                   # The port your service will listen on
+    targetPort: 8080           # The port your container is exposing (based on your Deployment's `containerPort`)
+    protocol: TCP
+    name: http                 # A descriptive name for the port
+  selector:
+    app: simple-web-app  
