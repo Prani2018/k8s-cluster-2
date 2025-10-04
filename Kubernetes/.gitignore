@@ -1,0 +1,4 @@
+# Ignore Terraform provider cache
+.terraform/
+*.tfstate
+*.tfstate.*
