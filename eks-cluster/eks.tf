@@ -7,12 +7,12 @@ terraform {
   }
 }
 provider "aws" {
-  region = var.aws_region
+  region = "us-east-1"
 }
 module "eks" {
   source                         = "terraform-aws-modules/eks/aws"
   version                        = "~> 19.0"
-  name     = var.cluster_name
+  name                           = "Cluster-East"
   cluster_version                = "1.29"
   cluster_endpoint_public_access = true
   vpc_id                         = module.my-vpc.vpc_id
