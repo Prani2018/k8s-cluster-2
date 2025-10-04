@@ -52,10 +52,9 @@ pipeline {
             steps {
                 script {
                     dir('Kubernetes') {
-                        sh "aws eks update-kubeconfig --name eks-cluster --region us-east-1"
+                        sh "aws eks update-kubeconfig --name Cluster-East --region us-east-1"
                         sh "cat /var/lib/jenkins/.kube/config"
-                        sh "kubectl apply -f nginx-deployment.yaml -n default"
-                        sh "kubectl apply -f nginx-service.yaml -n default"
+                        sh "kubectl apply -f tomcat-deployment.yaml -n default"
                     }
                 }
             }
@@ -74,7 +73,6 @@ pipeline {
                                 echo "EKS cluster exists, updating kubeconfig..."
                                 aws eks update-kubeconfig --name Cluster-East --region us-east-1
                                 echo "Cleaning up Kubernetes resources..."
-                                kubectl delete -f tomcat-service.yaml -n default --ignore-not-found=true
                                 kubectl delete -f tomcat-deployment.yaml -n default --ignore-not-found=true
                             else
                                 echo "EKS cluster does not exist, skipping Kubernetes cleanup"
