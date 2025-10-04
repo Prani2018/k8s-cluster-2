@@ -1,0 +1,8 @@
+terraform {
+  backend "s3" {
+    bucket = "eks/cluster-state-${var.aws_region}.tfstate"
+    region = "us-east-1"
+    key    = "eks/terraform.tfstate"
+  }
+}
+
