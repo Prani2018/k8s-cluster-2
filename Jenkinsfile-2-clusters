@@ -1,0 +1,127 @@
+#!/usr/bin/env groovy
+pipeline {
+    agent any
+    
+    // Static definition of the clusters to be built
+    def CLUSTERS = [
+        [NAME: 'eks-cluster-ue1', REGION: 'us-east-1', K8S_DIR: 'Kubernetes/ClusterA'],
+        [NAME: 'eks-cluster-uw2', REGION: 'us-west-2', K8S_DIR: 'Kubernetes/ClusterB']
+    ]
+
+    parameters {
+        choice(
+            name: 'ACTION',
+            choices: ['apply', 'destroy'],
+            description: 'Choose whether to apply or destroy the Terraform infrastructure'
+        )
+    }
+    
+    environment {
+        AWS_ACCESS_KEY_ID = credentials('AWS_ACCESS_KEY_ID')
+        AWS_SECRET_ACCESS_KEY = credentials('AWS_SECRET_ACCESS_KEY')
+        // General environment variables (REGION is now dynamic inside the parallel stage)
+        DOCKER_IMAGE = 'myapp'
+        DOCKER_TAG = "${env.BUILD_NUMBER}"
+        DOCKER_REGISTRY = 'docker.io'
+        DOCKER_CREDENTIALS_ID = 'dockerhub-credentials'
+    }
+
+    // Function to handle the Terraform logic for a single cluster
+    def callTerraform(clusterParams, action) {
+        def clusterName = clusterParams.NAME
+        def region = clusterParams.REGION
+        
+        stage("Terraform Action for ${clusterName} (${region})") {
+            dir("eks-cluster") {
+                sh "terraform init -backend-config=\"key=eks/state-${clusterName}.tfstate\""
+                
+                def terraformVars = "-var='aws_region=${region}' -var='cluster_name=${clusterName}'" 
+
+                if (action == 'apply') {
+                    echo "Applying Terraform configuration for ${clusterName} in ${region}..."
+                    sh "terraform apply -auto-approve ${terraformVars}"
+                } else if (action == 'destroy') {
+                    echo "Destroying Terraform infrastructure for ${clusterName} in ${region}..."
+                    sh "terraform destroy -auto-approve ${terraformVars}"
+                }
+            }
+        }
+    }
+
+    // Function to handle Kubernetes deployment for a single cluster
+    def callKubernetes(clusterParams, action) {
+        def clusterName = clusterParams.NAME
+        def region = clusterParams.REGION
+        def k8sDir = clusterParams.K8S_DIR
+
+        stage("Kubernetes Action for ${clusterName} (${region})") {
+            script {
+                // Set the region for the AWS CLI environment for this specific branch
+                env.AWS_DEFAULT_REGION = region
+
+                if (action == 'apply') {
+                    dir(k8sDir) {
+                        // Update kubeconfig for the specific cluster/region
+                        sh "aws eks update-kubeconfig --name ${clusterName} --region ${region}"
+                        echo "Deploying applications to ${clusterName}..."
+                        sh "kubectl apply -f nginx-deployment.yaml -n default"
+                        sh "kubectl apply -f nginx-service.yaml -n default"
+                    }
+                } else if (action == 'destroy') {
+                    // Cleanup Kubernetes Resources before Terraform destroy
+                    sh """
+                        if aws eks describe-cluster --name ${clusterName} --region ${region} >/dev/null 2>&1; then
+                            echo "EKS cluster exists, updating kubeconfig for cleanup..."
+                            aws eks update-kubeconfig --name ${clusterName} --region ${region}
+                            echo "Cleaning up Kubernetes resources in ${clusterName}..."
+                            dir(${k8sDir}) {
+                                kubectl delete -f nginx-service.yaml -n default --ignore-not-found=true
+                                kubectl delete -f nginx-deployment.yaml -n default --ignore-not-found=true
+                            }
+                        else
+                            echo "EKS cluster ${clusterName} does not exist, skipping Kubernetes cleanup."
+                        fi
+                    """
+                }
+            }
+        }
+    }
+
+    stages {
+        stage('Parallel EKS Provisioning/Destruction') {
+            steps {
+                script {
+                    def branches = [:]
+                    
+                    // 1. Create a branch for each cluster to run the actions in parallel
+                    for (cluster in CLUSTERS) {
+                        def name = cluster.NAME
+                        branches["${name} (${cluster.REGION})"] = {
+                            
+                            // The destroy logic must ensure Kubernetes cleanup runs BEFORE Terraform destroy.
+                            if (params.ACTION == 'destroy') {
+                                callKubernetes(cluster, 'destroy')
+                                callTerraform(cluster, 'destroy')
+                            } 
+                            
+                            // The apply logic runs Terraform first, then Kubernetes deployment.
+                            else if (params.ACTION == 'apply') {
+                                callTerraform(cluster, 'apply')
+                                callKubernetes(cluster, 'apply')
+                            }
+                        }
+                    }
+                    
+                    // 2. Execute all branches in parallel
+                    parallel branches
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            echo "Pipeline completed with action: ${params.ACTION} for all clusters."
+        }
+    }
+}
