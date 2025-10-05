@@ -16,7 +16,11 @@ module "eks" {
   cluster_version                = "1.32"
   cluster_endpoint_public_access = true
   vpc_id                         = module.Cluster-East-VPC.vpc_id
-  subnet_ids                     = module.Cluster-East-VPC.private_subnets
+  subnet_ids = concat(
+    module.Cluster-East-VPC.private_subnets,
+    module.Cluster-East-VPC.public_subnets
+  )
+  control_plane_subnet_ids = module.Cluster-East-VPC.private_subnets
   tags = {
     environment = "development"
     application = "simple-web-app"
@@ -27,6 +31,7 @@ module "eks" {
       max_size       = 3
       desired_size   = 2
       instance_types = ["t3.small"]
+	   subnet_ids = module.Cluster-East-VPC.private_subnets
     }
   }
 }
