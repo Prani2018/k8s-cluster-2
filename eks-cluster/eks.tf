@@ -13,13 +13,13 @@ module "eks" {
   source                         = "terraform-aws-modules/eks/aws"
   version                        = "~> 19.0"
   cluster_name                   = "Cluster-East"
-  cluster_version                = "1.31"
+  cluster_version                = "1.32"
   cluster_endpoint_public_access = true
-  vpc_id                         = module.my-vpc.vpc_id
-  subnet_ids                     = module.my-vpc.private_subnets
+  vpc_id                         = module.Cluster-East-VPC.vpc_id
+  subnet_ids                     = module.Cluster-East-VPC.private_subnets
   tags = {
     environment = "development"
-    application = "myapp"
+    application = "simple-web-app"
   }
   eks_managed_node_groups = {
     dev = {
