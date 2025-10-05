@@ -56,8 +56,10 @@ pipeline {
                 script {
                     dir('Kubernetes') {
                         sh "aws eks update-kubeconfig --name Cluster-East --region us-east-1"
+
                         sh "cat /var/lib/jenkins/.kube/config"
-                        sh "kubectl apply -f tomcat-deployment.yaml -n simple-web-app"
+                        sh "kubectl create namespace simple-web-app"
+			sh "kubectl apply -f tomcat-deployment.yaml -n simple-web-app"
                     }
                 }
             }
