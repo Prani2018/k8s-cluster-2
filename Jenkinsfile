@@ -35,18 +35,19 @@ def executeTerraformAction(config, action) {
         sh "rm -f .terraform.lock.hcl"
         
         // Initialize with backend configuration override
+        // tfvars file is now in the current directory after being copied
         sh """
             terraform init -reconfigure \
             -backend-config="key=${backendKey}" \
-            -var-file=../${tfVarFile}
+            -var-file=${tfVarFile}
         """
 
         if (action == 'apply') {
             echo "Applying Terraform configuration for ${clusterName} using ${tfVarFile}..."
-            sh "terraform apply -auto-approve -var-file=../${tfVarFile}"
+            sh "terraform apply -auto-approve -var-file=${tfVarFile}"
         } else if (action == 'destroy') {
             echo "Destroying Terraform infrastructure for ${clusterName} using ${tfVarFile}..."
-            sh "terraform destroy -auto-approve -var-file=../${tfVarFile}"
+            sh "terraform destroy -auto-approve -var-file=${tfVarFile}"
         }
     }
 }
