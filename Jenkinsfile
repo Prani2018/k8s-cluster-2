@@ -16,8 +16,6 @@ def westConfig = [
 
 // Helper Functions
 def executeTerraformAction(config, action) {
-    // Note: The script blocks are not needed here if the entire body is in a function
-    // and the function is called from a pipeline stage's 'script' step.
     dir("eks-cluster") {
         def tfVarFile = config.tf_var_file
         def clusterName = config.cluster_name
@@ -74,11 +72,15 @@ def cleanupKubernetes(config) {
 
 // Start the declarative pipeline block
 pipeline {
+    // FIX: Use the correct, verbose Docker agent syntax to explicitly define 'image' 
+    // and include '-u root' to resolve the Git file permission issues during module download.
     agent {
         docker {
-            docker 'hashicorp/terraform:latest'
+            image 'hashicorp/terraform:latest'
+            args '-u root'
         }
     }
+    
     parameters {
         choice(
             name: 'ACTION',
@@ -99,11 +101,9 @@ pipeline {
 	
     stages {
         stage("Parallel Cluster Action") {
-            // Apply or Destroy both clusters in parallel
             parallel {
                 stage("Cluster-East Action") {
                     steps {
-                        // Call the helper function from a script block
                         script {
                             executeTerraformAction(eastConfig, params.ACTION)
                         }
@@ -124,7 +124,6 @@ pipeline {
             when {
                 expression { params.ACTION == 'apply' }
             }
-            // Deploy application to both clusters in parallel
             parallel {
                 stage("Deploy to Cluster-East") {
                     steps {
@@ -147,7 +146,6 @@ pipeline {
             when {
                 expression { params.ACTION == 'destroy' }
             }
-            // Clean up Kubernetes resources in parallel
             parallel {
                 stage("Cleanup Cluster-East K8s") {
                     steps {
