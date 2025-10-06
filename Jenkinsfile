@@ -5,13 +5,15 @@
 def eastConfig = [
     tf_var_file: 'east.tfvars',
     kubeconfig_region: 'us-east-1',
-    cluster_name: 'Cluster-East'
+    cluster_name: 'Cluster-East',
+    backend_key: 'eks/cluster-state-us-east-1.tfstate'  // Add explicit backend key
 ]
 
 def westConfig = [
     tf_var_file: 'west.tfvars',
     kubeconfig_region: 'us-west-2',
-    cluster_name: 'Cluster-West'
+    cluster_name: 'Cluster-West',
+    backend_key: 'eks/cluster-state-us-west-2.tfstate'  // Add explicit backend key
 ]
 
 // Helper Functions
@@ -19,12 +21,18 @@ def executeTerraformAction(config, action) {
     dir("eks-cluster") {
         def tfVarFile = config.tf_var_file
         def clusterName = config.cluster_name
+        def backendKey = config.backend_key
 
         // Always re-init for the specific region's state file before any action
         sh "rm -rf .terraform"
         sh "rm -f .terraform.lock.hcl"
-        // Use -var-file to select the correct S3 backend key (which depends on var.region)
-        sh "terraform init -reconfigure -var-file=${tfVarFile}"
+        
+        // Initialize with backend configuration override
+        sh """
+            terraform init -reconfigure \
+            -backend-config="key=${backendKey}" \
+            -var-file=${tfVarFile}
+        """
 
         if (action == 'apply') {
             echo "Applying Terraform configuration for ${clusterName} using ${tfVarFile}..."
@@ -54,7 +62,6 @@ def cleanupKubernetes(config) {
         def clusterName = config.cluster_name
         def kubeconfigRegion = config.kubeconfig_region
         
-        // Use the cluster-specific variables in the shell check
         sh '''
             if aws eks describe-cluster --name ''' + clusterName + ''' --region ''' + kubeconfigRegion + ''' >/dev/null 2>&1;
             then
@@ -69,17 +76,9 @@ def cleanupKubernetes(config) {
     }
 }
 
-
 // Start the declarative pipeline block
 pipeline {
-    // FIX: Use the correct, verbose Docker agent syntax to explicitly define 'image' 
-    // and include '-u root' to resolve the Git file permission issues during module download.
-    agent {
-        docker {
-            image 'hashicorp/terraform:latest'
-            args '-u root'
-        }
-    }
+    agent any
     
     parameters {
         choice(
@@ -93,12 +92,12 @@ pipeline {
         AWS_ACCESS_KEY_ID = credentials('AWS_ACCESS_KEY_ID')
         AWS_SECRET_ACCESS_KEY = credentials('AWS_SECRET_ACCESS_KEY')
         AWS_DEFAULT_REGION = "us-east-1"
-		DOCKER_IMAGE = 'myapp'
+        DOCKER_IMAGE = 'myapp'
         DOCKER_TAG = "${env.BUILD_NUMBER}"
         DOCKER_REGISTRY = 'docker.io'
         DOCKER_CREDENTIALS_ID = 'dockerhub-credentials'
     }
-	
+    
     stages {
         stage("Parallel Cluster Action") {
             parallel {
