@@ -59,6 +59,26 @@ def deployKubernetes(config) {
 
         echo "Deploying to ${clusterName}..."
         sh "aws eks update-kubeconfig --name ${clusterName} --region ${kubeconfigRegion}"
+        
+        // Create namespace first
+        sh "kubectl create namespace simple-web-app --dry-run=client -o yaml | kubectl apply -f -"
+        
+        // Create or update Docker registry secret
+        withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', 
+                                          usernameVariable: 'DOCKER_USER', 
+                                          passwordVariable: 'DOCKER_PASS')]) {
+            sh """
+                kubectl create secret docker-registry private-docker-registry \
+                  --docker-server=docker.io \
+                  --docker-username=\${DOCKER_USER} \
+                  --docker-password=\${DOCKER_PASS} \
+                  --docker-email=your-email@example.com \
+                  -n simple-web-app \
+                  --dry-run=client -o yaml | kubectl apply -f -
+            """
+        }
+        
+        // Deploy application
         sh "kubectl apply -f tomcat-deployment.yaml -n simple-web-app"
         sh "kubectl get service -n simple-web-app"
     }
