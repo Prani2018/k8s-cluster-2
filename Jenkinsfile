@@ -8,12 +8,25 @@ pipeline {
             choices: ['apply', 'destroy'],
             description: 'Choose whether to apply or destroy the Terraform infrastructure'
         )
+        // ENVIRONMENT parameter is no longer needed to select a single region, as both are processed
     }
+    
+    // Define all environment-specific configurations
+    def eastConfig = [
+        tf_var_file: 'east.tfvars',
+        kubeconfig_region: 'us-east-1',
+        cluster_name: 'Cluster-East'
+    ]
+    def westConfig = [
+        tf_var_file: 'west.tfvars',
+        kubeconfig_region: 'us-west-2',
+        cluster_name: 'Cluster-West'
+    ]
     
     environment {
         AWS_ACCESS_KEY_ID = credentials('AWS_ACCESS_KEY_ID')
         AWS_SECRET_ACCESS_KEY = credentials('AWS_SECRET_ACCESS_KEY')
-        AWS_DEFAULT_REGION = "us-east-1"
+        AWS_DEFAULT_REGION = "us-east-1" // Used for S3 backend access
 		DOCKER_IMAGE = 'myapp'
         DOCKER_TAG = "${env.BUILD_NUMBER}"
         DOCKER_REGISTRY = 'docker.io'
@@ -21,74 +34,75 @@ pipeline {
     }
 	
     stages {
-        stage("Terraform Action") {
-            steps {
-                script {
-                    dir('eks-cluster') {
-                        sh '''
-                        # Remove cached backend configuration
-                        rm -rf .terraform
-                        rm -f .terraform.lock.hcl
-                        
-                        # Reinitialize with new backend
-                        terraform init -reconfigure 
-
-			'''
-
-
-                        if (params.ACTION == 'apply') {
-                            echo "Applying Terraform configuration..."
-                            sh "terraform apply -auto-approve"
-                        } else if (params.ACTION == 'destroy') {
-                            echo "Destroying Terraform infrastructure..."
-                            sh "terraform destroy -auto-approve"
+        stage("Parallel Cluster Action") {
+            // Apply or Destroy both clusters in parallel
+            parallel {
+                stage("Cluster-East Action") {
+                    steps {
+                        script {
+                            executeTerraformAction(eastConfig, params.ACTION)
+                        }
+                    }
+                }
+                
+                stage("Cluster-West Action") {
+                    steps {
+                        script {
+                            executeTerraformAction(westConfig, params.ACTION)
                         }
                     }
                 }
             }
         }
         
-        stage("Deploy to EKS") {
+        stage("Parallel Deploy to EKS") {
             when {
                 expression { params.ACTION == 'apply' }
             }
-            steps {
-                script {
-                    dir('Kubernetes') {
-                        sh "aws eks update-kubeconfig --name Cluster-East --region us-east-1"
-
-                        sh "cat /var/lib/jenkins/.kube/config"
-			sh "kubectl apply -f tomcat-deployment.yaml -n simple-web-app"
-			sh "kubectl get service -n simple-web-app"
+            // Deploy application to both clusters in parallel
+            parallel {
+                stage("Deploy to Cluster-East") {
+                    steps {
+                        script {
+                            deployKubernetes(eastConfig)
+                        }
+                    }
+                }
+                stage("Deploy to Cluster-West") {
+                    steps {
+                        script {
+                            deployKubernetes(westConfig)
+                        }
                     }
                 }
             }
         }
         
-        stage("Cleanup Kubernetes Resources") {
+        stage("Parallel Cleanup Kubernetes Resources") {
             when {
                 expression { params.ACTION == 'destroy' }
             }
-            steps {
-                script {
-                    dir('Kubernetes') {
-                        // Update kubeconfig first (in case cluster still exists)
-                        sh '''
-                            if aws eks describe-cluster --name eks-cluster --region us-east-1 >/dev/null 2>&1; then
-                                echo "EKS cluster exists, updating kubeconfig..."
-                                aws eks update-kubeconfig --name Cluster-East --region us-east-1
-                                echo "Cleaning up Kubernetes resources..."
-                                kubectl delete -f tomcat-deployment.yaml -n simple-web-app --ignore-not-found=true
-                            else
-                                echo "EKS cluster does not exist, skipping Kubernetes cleanup"
-                            fi
-                        '''
+            // Clean up Kubernetes resources in parallel before Terraform destroy finishes
+            parallel {
+                stage("Cleanup Cluster-East K8s") {
+                    steps {
+                        script {
+                            cleanupKubernetes(eastConfig)
+                        }
+                    }
+                }
+                stage("Cleanup Cluster-West K8s") {
+                    steps {
+                        script {
+                            cleanupKubernetes(westConfig)
+                        }
                     }
                 }
             }
         }
     }
     
+    // Post actions remain the same
     post {
         always {
             echo "Pipeline completed with action: ${params.ACTION}"
@@ -111,5 +125,61 @@ pipeline {
                 }
             }
         }
+    }
+}
+
+// Global functions to handle repeated logic for each cluster
+
+def executeTerraformAction(config, action) {
+    dir("eks-cluster") {
+        def tfVarFile = config.tf_var_file
+        def clusterName = config.cluster_name
+
+        // Always re-init for the specific region's state file before any action
+        sh "rm -rf .terraform"
+        sh "rm -f .terraform.lock.hcl"
+        // Use -var-file to select the correct S3 backend key (which depends on var.region)
+        sh "terraform init -reconfigure -var-file=${tfVarFile}"
+
+        if (action == 'apply') {
+            echo "Applying Terraform configuration for ${clusterName} using ${tfVarFile}..."
+            sh "terraform apply -auto-approve -var-file=${tfVarFile}"
+        } else if (action == 'destroy') {
+            echo "Destroying Terraform infrastructure for ${clusterName} using ${tfVarFile}..."
+            sh "terraform destroy -auto-approve -var-file=${tfVarFile}"
+        }
+    }
+}
+
+def deployKubernetes(config) {
+    dir("Kubernetes") {
+        def clusterName = config.cluster_name
+        def kubeconfigRegion = config.kubeconfig_region
+
+        echo "Deploying to ${clusterName}..."
+        sh "aws eks update-kubeconfig --name ${clusterName} --region ${kubeconfigRegion}"
+        sh "cat /var/lib/jenkins/.kube/config"
+        sh "kubectl apply -f tomcat-deployment.yaml -n simple-web-app"
+        sh "kubectl get service -n simple-web-app"
+    }
+}
+
+def cleanupKubernetes(config) {
+    dir("Kubernetes") {
+        def clusterName = config.cluster_name
+        def kubeconfigRegion = config.kubeconfig_region
+        
+        // Use the cluster-specific variables in the shell check
+        sh '''
+            if aws eks describe-cluster --name ''' + clusterName + ''' --region ''' + kubeconfigRegion + ''' >/dev/null 2>&1;
+            then
+                echo "EKS cluster ''' + clusterName + ''' exists, updating kubeconfig..."
+                aws eks update-kubeconfig --name ''' + clusterName + ''' --region ''' + kubeconfigRegion + '''
+                echo "Cleaning up Kubernetes resources..."
+                kubectl delete -f tomcat-deployment.yaml -n simple-web-app --ignore-not-found=true
+            else
+                echo "EKS cluster ''' + clusterName + ''' does not exist, skipping Kubernetes cleanup"
+            fi
+        '''
     }
 }

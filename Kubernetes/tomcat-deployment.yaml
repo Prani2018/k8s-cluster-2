@@ -39,25 +39,12 @@ kind: Service
 metadata:
   name: simple-web-app-service # Choose a descriptive name for your service
   namespace: simple-web-app             # Ensure this matches the namespace in your Deployment
-  annotations:
-    # Use NLB for better performance
-    service.beta.kubernetes.io/aws-load-balancer-type: "external"
-    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
-    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
-    
-    # Health check settings
-    service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: "HTTP"
-    service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/"
-    service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval: "30"
-    service.beta.kubernetes.io/aws-load-balancer-healthcheck-timeout: "10"
-    
-    # Enable cross-zone load balancing
-    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
-  
+ labels:
+    app: simple-web-app # Label for Service
 
 spec:
   type: LoadBalancer           # This will provision an AWS ELB (or equivalent) for external access
-  ports:
+  ports:  
   - port: 80                   # The port your service will listen on
     targetPort: 8080           # The port your container is exposing (based on your Deployment's `containerPort`)
     protocol: TCP
