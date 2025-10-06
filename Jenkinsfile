@@ -6,24 +6,31 @@ def eastConfig = [
     tf_var_file: 'east.tfvars',
     kubeconfig_region: 'us-east-1',
     cluster_name: 'Cluster-East',
-    backend_key: 'eks/cluster-state-us-east-1.tfstate'  // Add explicit backend key
+    backend_key: 'eks/cluster-state-us-east-1.tfstate',
+    work_dir: 'eks-cluster-east'  // Separate working directory
 ]
 
 def westConfig = [
     tf_var_file: 'west.tfvars',
     kubeconfig_region: 'us-west-2',
     cluster_name: 'Cluster-West',
-    backend_key: 'eks/cluster-state-us-west-2.tfstate'  // Add explicit backend key
+    backend_key: 'eks/cluster-state-us-west-2.tfstate',
+    work_dir: 'eks-cluster-west'  // Separate working directory
 ]
 
 // Helper Functions
 def executeTerraformAction(config, action) {
-    dir("eks-cluster") {
-        def tfVarFile = config.tf_var_file
-        def clusterName = config.cluster_name
-        def backendKey = config.backend_key
-
-        // Always re-init for the specific region's state file before any action
+    def tfVarFile = config.tf_var_file
+    def clusterName = config.cluster_name
+    def backendKey = config.backend_key
+    def workDir = config.work_dir
+    
+    // Create isolated working directory for this cluster
+    sh "mkdir -p ${workDir}"
+    sh "cp -r eks-cluster/* ${workDir}/ 2>/dev/null || true"
+    
+    dir(workDir) {
+        // Clean up any existing state
         sh "rm -rf .terraform"
         sh "rm -f .terraform.lock.hcl"
         
@@ -31,15 +38,15 @@ def executeTerraformAction(config, action) {
         sh """
             terraform init -reconfigure \
             -backend-config="key=${backendKey}" \
-            -var-file=${tfVarFile}
+            -var-file=../${tfVarFile}
         """
 
         if (action == 'apply') {
             echo "Applying Terraform configuration for ${clusterName} using ${tfVarFile}..."
-            sh "terraform apply -auto-approve -var-file=${tfVarFile}"
+            sh "terraform apply -auto-approve -var-file=../${tfVarFile}"
         } else if (action == 'destroy') {
             echo "Destroying Terraform infrastructure for ${clusterName} using ${tfVarFile}..."
-            sh "terraform destroy -auto-approve -var-file=${tfVarFile}"
+            sh "terraform destroy -auto-approve -var-file=../${tfVarFile}"
         }
     }
 }
@@ -51,7 +58,6 @@ def deployKubernetes(config) {
 
         echo "Deploying to ${clusterName}..."
         sh "aws eks update-kubeconfig --name ${clusterName} --region ${kubeconfigRegion}"
-        sh "cat /var/lib/jenkins/.kube/config"
         sh "kubectl apply -f tomcat-deployment.yaml -n simple-web-app"
         sh "kubectl get service -n simple-web-app"
     }
@@ -167,6 +173,8 @@ pipeline {
     post {
         always {
             echo "Pipeline completed with action: ${params.ACTION}"
+            // Clean up temporary working directories
+            sh 'rm -rf eks-cluster-east eks-cluster-west || true'
         }
         success {
             script {
