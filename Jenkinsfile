@@ -74,8 +74,12 @@ def cleanupKubernetes(config) {
 
 // Start the declarative pipeline block
 pipeline {
-    agent any
-    
+    agent {
+        docker {
+            image 'hashicorp/terraform:latest' // Use a Terraform image that includes git
+            args '-u root' // Run as root to avoid any permission issues during module download
+        }
+    }
     parameters {
         choice(
             name: 'ACTION',
