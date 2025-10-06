@@ -72,15 +72,21 @@ def deployKubernetes(config) {
                   --docker-server=docker.io \
                   --docker-username=\${DOCKER_USER} \
                   --docker-password=\${DOCKER_PASS} \
-                  --docker-email=gcpa2279@gmail.com \
+                  --docker-email=your-email@example.com \
                   -n simple-web-app \
                   --dry-run=client -o yaml | kubectl apply -f -
             """
         }
         
         // Deploy application
-        sh "kubectl apply -f tomcat-deployment.yaml -n simple-web-app"
+        sh "kubectl apply -f tomcat-deployment.yaml"
+        
+        // Wait for LoadBalancer to be ready
         sh "kubectl get service -n simple-web-app"
+        
+        echo "Waiting for LoadBalancer External IP..."
+        sh "kubectl wait --for=jsonpath='{.status.loadBalancer.ingress}' service/simple-web-app-service -n simple-web-app --timeout=300s || echo 'LoadBalancer provisioning in progress...'"
+        sh "kubectl get service simple-web-app-service -n simple-web-app"
     }
 }
 
