@@ -1,136 +1,23 @@
-#!/usr/bin/env groovy
-pipeline {
-    agent any
-    
-    parameters {
-        choice(
-            name: 'ACTION',
-            choices: ['apply', 'destroy'],
-            description: 'Choose whether to apply or destroy the Terraform infrastructure'
-        )
-        // ENVIRONMENT parameter is no longer needed to select a single region, as both are processed
-    }
-    
-    // Define all environment-specific configurations
-    def eastConfig = [
-        tf_var_file: 'east.tfvars',
-        kubeconfig_region: 'us-east-1',
-        cluster_name: 'Cluster-East'
-    ]
-    def westConfig = [
-        tf_var_file: 'west.tfvars',
-        kubeconfig_region: 'us-west-2',
-        cluster_name: 'Cluster-West'
-    ]
-    
-    environment {
-        AWS_ACCESS_KEY_ID = credentials('AWS_ACCESS_KEY_ID')
-        AWS_SECRET_ACCESS_KEY = credentials('AWS_SECRET_ACCESS_KEY')
-        AWS_DEFAULT_REGION = "us-east-1" // Used for S3 backend access
-		DOCKER_IMAGE = 'myapp'
-        DOCKER_TAG = "${env.BUILD_NUMBER}"
-        DOCKER_REGISTRY = 'docker.io'
-        DOCKER_CREDENTIALS_ID = 'dockerhub-credentials'
-    }
-	
-    stages {
-        stage("Parallel Cluster Action") {
-            // Apply or Destroy both clusters in parallel
-            parallel {
-                stage("Cluster-East Action") {
-                    steps {
-                        script {
-                            executeTerraformAction(eastConfig, params.ACTION)
-                        }
-                    }
-                }
-                
-                stage("Cluster-West Action") {
-                    steps {
-                        script {
-                            executeTerraformAction(westConfig, params.ACTION)
-                        }
-                    }
-                }
-            }
-        }
-        
-        stage("Parallel Deploy to EKS") {
-            when {
-                expression { params.ACTION == 'apply' }
-            }
-            // Deploy application to both clusters in parallel
-            parallel {
-                stage("Deploy to Cluster-East") {
-                    steps {
-                        script {
-                            deployKubernetes(eastConfig)
-                        }
-                    }
-                }
-                stage("Deploy to Cluster-West") {
-                    steps {
-                        script {
-                            deployKubernetes(westConfig)
-                        }
-                    }
-                }
-            }
-        }
-        
-        stage("Parallel Cleanup Kubernetes Resources") {
-            when {
-                expression { params.ACTION == 'destroy' }
-            }
-            // Clean up Kubernetes resources in parallel before Terraform destroy finishes
-            parallel {
-                stage("Cleanup Cluster-East K8s") {
-                    steps {
-                        script {
-                            cleanupKubernetes(eastConfig)
-                        }
-                    }
-                }
-                stage("Cleanup Cluster-West K8s") {
-                    steps {
-                        script {
-                            cleanupKubernetes(westConfig)
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    // Post actions remain the same
-    post {
-        always {
-            echo "Pipeline completed with action: ${params.ACTION}"
-        }
-        success {
-            script {
-                if (params.ACTION == 'apply') {
-                    echo "Infrastructure successfully created and applications deployed!"
-                } else {
-                    echo "Infrastructure successfully destroyed!"
-                }
-            }
-        }
-        failure {
-            script {
-                if (params.ACTION == 'apply') {
-                    echo "Failed to create infrastructure or deploy applications"
-                } else {
-                    echo "Failed to destroy infrastructure"
-                }
-            }
-        }
-    }
-}
+// Define configuration maps and helper functions outside the 'pipeline' block
+// to be accessible by the Groovy runtime.
 
-// Global functions to handle repeated logic for each cluster
+// Configuration Maps
+def eastConfig = [
+    tf_var_file: 'east.tfvars',
+    kubeconfig_region: 'us-east-1',
+    cluster_name: 'Cluster-East'
+]
 
+def westConfig = [
+    tf_var_file: 'west.tfvars',
+    kubeconfig_region: 'us-west-2',
+    cluster_name: 'Cluster-West'
+]
+
+// Helper Functions
 def executeTerraformAction(config, action) {
+    // Note: The script blocks are not needed here if the entire body is in a function
+    // and the function is called from a pipeline stage's 'script' step.
     dir("eks-cluster") {
         def tfVarFile = config.tf_var_file
         def clusterName = config.cluster_name
@@ -181,5 +68,123 @@ def cleanupKubernetes(config) {
                 echo "EKS cluster ''' + clusterName + ''' does not exist, skipping Kubernetes cleanup"
             fi
         '''
+    }
+}
+
+
+// Start the declarative pipeline block
+pipeline {
+    agent any
+    
+    parameters {
+        choice(
+            name: 'ACTION',
+            choices: ['apply', 'destroy'],
+            description: 'Choose whether to apply or destroy the Terraform infrastructure'
+        )
+    }
+    
+    environment {
+        AWS_ACCESS_KEY_ID = credentials('AWS_ACCESS_KEY_ID')
+        AWS_SECRET_ACCESS_KEY = credentials('AWS_SECRET_ACCESS_KEY')
+        AWS_DEFAULT_REGION = "us-east-1"
+		DOCKER_IMAGE = 'myapp'
+        DOCKER_TAG = "${env.BUILD_NUMBER}"
+        DOCKER_REGISTRY = 'docker.io'
+        DOCKER_CREDENTIALS_ID = 'dockerhub-credentials'
+    }
+	
+    stages {
+        stage("Parallel Cluster Action") {
+            // Apply or Destroy both clusters in parallel
+            parallel {
+                stage("Cluster-East Action") {
+                    steps {
+                        // Call the helper function from a script block
+                        script {
+                            executeTerraformAction(eastConfig, params.ACTION)
+                        }
+                    }
+                }
+                
+                stage("Cluster-West Action") {
+                    steps {
+                        script {
+                            executeTerraformAction(westConfig, params.ACTION)
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage("Parallel Deploy to EKS") {
+            when {
+                expression { params.ACTION == 'apply' }
+            }
+            // Deploy application to both clusters in parallel
+            parallel {
+                stage("Deploy to Cluster-East") {
+                    steps {
+                        script {
+                            deployKubernetes(eastConfig)
+                        }
+                    }
+                }
+                stage("Deploy to Cluster-West") {
+                    steps {
+                        script {
+                            deployKubernetes(westConfig)
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage("Parallel Cleanup Kubernetes Resources") {
+            when {
+                expression { params.ACTION == 'destroy' }
+            }
+            // Clean up Kubernetes resources in parallel
+            parallel {
+                stage("Cleanup Cluster-East K8s") {
+                    steps {
+                        script {
+                            cleanupKubernetes(eastConfig)
+                        }
+                    }
+                }
+                stage("Cleanup Cluster-West K8s") {
+                    steps {
+                        script {
+                            cleanupKubernetes(westConfig)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            echo "Pipeline completed with action: ${params.ACTION}"
+        }
+        success {
+            script {
+                if (params.ACTION == 'apply') {
+                    echo "Infrastructure successfully created and applications deployed!"
+                } else {
+                    echo "Infrastructure successfully destroyed!"
+                }
+            }
+        }
+        failure {
+            script {
+                if (params.ACTION == 'apply') {
+                    echo "Failed to create infrastructure or deploy applications"
+                } else {
+                    echo "Failed to destroy infrastructure"
+                }
+            }
+        }
     }
 }
