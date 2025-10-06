@@ -56,37 +56,46 @@ def deployKubernetes(config) {
     dir("Kubernetes") {
         def clusterName = config.cluster_name
         def kubeconfigRegion = config.kubeconfig_region
+        def kubeconfigFile = "${env.WORKSPACE}/kubeconfig-${clusterName}"
 
         echo "Deploying to ${clusterName}..."
-        sh "aws eks update-kubeconfig --name ${clusterName} --region ${kubeconfigRegion}"
         
-        // Create namespace first
-        sh "kubectl create namespace simple-web-app --dry-run=client -o yaml | kubectl apply -f -"
+        // Create cluster-specific kubeconfig file
+        sh "aws eks update-kubeconfig --name ${clusterName} --region ${kubeconfigRegion} --kubeconfig ${kubeconfigFile}"
         
-        // Create or update Docker registry secret
-        withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', 
-                                          usernameVariable: 'DOCKER_USER', 
-                                          passwordVariable: 'DOCKER_PASS')]) {
-            sh """
-                kubectl create secret docker-registry private-docker-registry \
-                  --docker-server=docker.io \
-                  --docker-username=\${DOCKER_USER} \
-                  --docker-password=\${DOCKER_PASS} \
-                  --docker-email=your-email@example.com \
-                  -n simple-web-app \
-                  --dry-run=client -o yaml | kubectl apply -f -
-            """
+        // Set KUBECONFIG environment variable for all kubectl commands
+        withEnv(["KUBECONFIG=${kubeconfigFile}"]) {
+            // Create namespace first
+            sh "kubectl create namespace simple-web-app --dry-run=client -o yaml | kubectl apply -f -"
+            
+            // Create or update Docker registry secret
+            withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', 
+                                              usernameVariable: 'DOCKER_USER', 
+                                              passwordVariable: 'DOCKER_PASS')]) {
+                sh """
+                    kubectl create secret docker-registry private-docker-registry \
+                      --docker-server=docker.io \
+                      --docker-username=\${DOCKER_USER} \
+                      --docker-password=\${DOCKER_PASS} \
+                      --docker-email=gcpa2279@gmail.com \
+                      -n simple-web-app \
+                      --dry-run=client -o yaml | kubectl apply -f -
+                """
+            }
+            
+            // Deploy application
+            sh "kubectl apply -f tomcat-deployment.yaml"
+            
+            // Wait for LoadBalancer to be ready
+            sh "kubectl get service -n simple-web-app"
+            
+            echo "Waiting for LoadBalancer External IP for ${clusterName}..."
+            sh "sleep 5"  // Give a moment for status to update
+            sh "kubectl get service simple-web-app-service -n simple-web-app -o wide"
         }
         
-        // Deploy application
-        sh "kubectl apply -f tomcat-deployment.yaml"
-        
-        // Wait for LoadBalancer to be ready
-        sh "kubectl get service -n simple-web-app"
-        
-        echo "Waiting for LoadBalancer External IP..."
-        sh "kubectl wait --for=jsonpath='{.status.loadBalancer.ingress}' service/simple-web-app-service -n simple-web-app --timeout=300s || echo 'LoadBalancer provisioning in progress...'"
-        sh "kubectl get service simple-web-app-service -n simple-web-app"
+        // Cleanup kubeconfig file
+        sh "rm -f ${kubeconfigFile}"
     }
 }
 
