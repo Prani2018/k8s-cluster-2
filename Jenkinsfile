@@ -72,7 +72,7 @@ def deployKubernetes(config) {
                   --docker-server=docker.io \
                   --docker-username=\${DOCKER_USER} \
                   --docker-password=\${DOCKER_PASS} \
-                  --docker-email=your-email@example.com \
+                  --docker-email=gcpa2279@gmail.com \
                   -n simple-web-app \
                   --dry-run=client -o yaml | kubectl apply -f -
             """
